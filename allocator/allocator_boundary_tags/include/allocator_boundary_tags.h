@@ -68,8 +68,6 @@ private:
 
     std::vector<allocator_test_utils::block_info> get_blocks_info_inner() const override;
 
-/** TODO: Highly recommended for helper functions to return references */
-
     class boundary_iterator
     {
         void* _occupied_ptr;
@@ -116,4 +114,4 @@ private:
     boundary_iterator end() const noexcept;
 };
 
-#endif //MATH_PRACTICE_AND_OPERATING_SYSTEMS_ALLOCATOR_ALLOCATOR_BOUNDARY_TAGS_H
+#endif 
