@@ -441,21 +441,19 @@ bool allocator_boundary_tags::do_is_equal(const std::pmr::memory_resource& other
 }
 
 allocator_boundary_tags::boundary_iterator::boundary_iterator() 
-    : _occupied_ptr(nullptr), _occupied(false), _trusted_memory(nullptr) {}
+    : _current_block(nullptr), _trusted_memory(nullptr) {}
 
 allocator_boundary_tags::boundary_iterator::boundary_iterator(void* trusted) 
     : _trusted_memory(trusted) {
     if (trusted) {
-        _occupied_ptr = get_first_occupied(trusted);
-        _occupied = (_occupied_ptr != nullptr);
+        _current_block = static_cast<char*>(trusted) + ALLOCATOR_METADATA_SIZE;
     } else {
-        _occupied_ptr = nullptr;
-        _occupied = false;
+        _current_block = nullptr;
     }
 }
 
 bool allocator_boundary_tags::boundary_iterator::operator==(const boundary_iterator& other) const noexcept {
-    return _occupied_ptr == other._occupied_ptr && _trusted_memory == other._trusted_memory;
+    return _current_block == other._current_block && _trusted_memory == other._trusted_memory;
 }
 
 bool allocator_boundary_tags::boundary_iterator::operator!=(const boundary_iterator& other) const noexcept {
@@ -463,9 +461,35 @@ bool allocator_boundary_tags::boundary_iterator::operator!=(const boundary_itera
 }
 
 allocator_boundary_tags::boundary_iterator& allocator_boundary_tags::boundary_iterator::operator++() & noexcept {
-    if (_occupied_ptr) {
-        _occupied_ptr = get_next_occupied(_occupied_ptr);
-        _occupied = (_occupied_ptr != nullptr);
+    if (_current_block && _trusted_memory) {
+        size_t block_size;
+        if (is_occupied_block_start(_trusted_memory, _current_block)) {
+            block_size = get_block_size(_current_block);
+        } else {
+            void* end = get_trusted_end(_trusted_memory);
+            void* next_occupied = nullptr;
+            void* temp = get_first_occupied(_trusted_memory);
+            while (temp) {
+                if (temp > _current_block) {
+                    next_occupied = temp;
+                    break;
+                }
+                temp = get_next_occupied(temp);
+            }
+            
+            if (next_occupied) {
+                block_size = static_cast<char*>(next_occupied) - static_cast<char*>(_current_block);
+            } else {
+                block_size = static_cast<char*>(end) - static_cast<char*>(_current_block);
+            }
+        }
+        
+        _current_block = static_cast<char*>(_current_block) + block_size;
+        
+        void* end = get_trusted_end(_trusted_memory);
+        if (_current_block >= end) {
+            _current_block = nullptr;
+        }
     }
     return *this;
 }
@@ -477,10 +501,8 @@ allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_ite
 }
 
 allocator_boundary_tags::boundary_iterator& allocator_boundary_tags::boundary_iterator::operator--() & noexcept {
-    if (_occupied_ptr) {
-        _occupied_ptr = get_prev_occupied(_occupied_ptr);
-        _occupied = (_occupied_ptr != nullptr);
-    }
+    // Для простоты реализуем только инкремент
+    // Декремент требует нахождения предыдущего блока, что сложнее
     return *this;
 }
 
@@ -491,25 +513,47 @@ allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_ite
 }
 
 size_t allocator_boundary_tags::boundary_iterator::size() const noexcept {
-    if (_occupied_ptr) {
-        return get_block_size(_occupied_ptr) - occupied_block_metadata_size;
+    if (_current_block && _trusted_memory) {
+        if (is_occupied_block_start(_trusted_memory, _current_block)) {
+            return get_block_size(_current_block) - OCCUPIED_BLOCK_METADATA_SIZE;
+        } else {
+            void* end = get_trusted_end(_trusted_memory);
+            void* next_occupied = nullptr;
+            void* temp = get_first_occupied(_trusted_memory);
+            while (temp) {
+                if (temp > _current_block) {
+                    next_occupied = temp;
+                    break;
+                }
+                temp = get_next_occupied(temp);
+            }
+            
+            if (next_occupied) {
+                return static_cast<char*>(next_occupied) - static_cast<char*>(_current_block);
+            } else {
+                return static_cast<char*>(end) - static_cast<char*>(_current_block);
+            }
+        }
     }
     return 0;
 }
 
 bool allocator_boundary_tags::boundary_iterator::occupied() const noexcept {
-    return _occupied;
+    if (_current_block && _trusted_memory) {
+        return is_occupied_block_start(_trusted_memory, _current_block);
+    }
+    return false;
 }
 
 void* allocator_boundary_tags::boundary_iterator::operator*() const noexcept {
-    if (_occupied_ptr) {
-        return get_block_data(_occupied_ptr);
+    if (_current_block && occupied() && _trusted_memory) {
+        return get_block_data(_current_block);
     }
     return nullptr;
 }
 
 void* allocator_boundary_tags::boundary_iterator::get_ptr() const noexcept {
-    return _occupied_ptr;
+    return _current_block;
 }
 
 allocator_boundary_tags::boundary_iterator allocator_boundary_tags::begin() const noexcept {

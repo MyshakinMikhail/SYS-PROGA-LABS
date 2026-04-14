@@ -70,8 +70,7 @@ private:
 
     class boundary_iterator
     {
-        void* _occupied_ptr;
-        bool _occupied;
+        void* _current_block;
         void* _trusted_memory;
 
     public:
@@ -104,7 +103,7 @@ private:
 
         boundary_iterator();
 
-        boundary_iterator(void* trusted);
+        explicit boundary_iterator(void* trusted);
     };
 
     friend class boundary_iterator;
@@ -114,4 +113,4 @@ private:
     boundary_iterator end() const noexcept;
 };
 
-#endif 
+#endif
