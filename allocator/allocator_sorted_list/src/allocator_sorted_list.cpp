@@ -7,9 +7,10 @@ allocator_sorted_list::~allocator_sorted_list()
     if (_trusted_memory == nullptr) return;
     
     std::pmr::memory_resource* parent = *reinterpret_cast<std::pmr::memory_resource**>(_trusted_memory);
-    size_t data_size = *reinterpret_cast<size_t*>(
-        static_cast<char*>(_trusted_memory) + sizeof(std::pmr::memory_resource*) + sizeof(allocator_with_fit_mode::fit_mode));
-    size_t total_size = allocator_metadata_size + data_size;
+    size_t total_size = *reinterpret_cast<size_t*>(
+        static_cast<char*>(_trusted_memory)
+        + sizeof(std::pmr::memory_resource*)
+        + sizeof(allocator_with_fit_mode::fit_mode));
 
     if (parent != nullptr) {
         parent->deallocate(_trusted_memory, total_size);
@@ -354,6 +355,7 @@ void allocator_sorted_list::do_deallocate_sm(
         *reinterpret_cast<size_t*>(static_cast<char*>(prev) + sizeof(void*)) = prev_size + block_size;
         *reinterpret_cast<void**>(prev) = *reinterpret_cast<void**>(block);
     }
+    // должен ли аллокатор стирать метаданные старого слитого блока
 }
 
 inline void allocator_sorted_list::set_fit_mode(
