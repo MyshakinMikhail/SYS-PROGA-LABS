@@ -70,6 +70,26 @@ namespace {
         return static_cast<char*>(trusted) + ALLOCATOR_METADATA_SIZE + get_trusted_size(trusted);
     }
     
+    // Функция для вычисления размера свободного блока
+    size_t get_free_block_size(void* trusted, void* block_start, void* end) {
+        void* next_occupied = nullptr;
+        void* temp = get_first_occupied(trusted);
+        
+        while (temp) {
+            if (temp > block_start) {
+                next_occupied = temp;
+                break;
+            }
+            temp = get_next_occupied(temp);
+        }
+        
+        if (next_occupied) {
+            return static_cast<char*>(next_occupied) - static_cast<char*>(block_start);
+        } else {
+            return static_cast<char*>(end) - static_cast<char*>(block_start);
+        }
+    }
+    
     void* find_free_block(void* trusted, size_t required_size, allocator_with_fit_mode::fit_mode mode) {
         void* result = nullptr;
         size_t best_diff = (mode == allocator_with_fit_mode::fit_mode::the_worst_fit) ? 0 : SIZE_MAX;
@@ -83,17 +103,11 @@ namespace {
             while (temp && temp < current) {
                 temp = get_next_occupied(temp);
             }
-
             
-             if (temp == current) {
+            if (temp == current) {
                 current = get_next_block(current);
             } else {
-                size_t free_size;
-                if (temp) {
-                    free_size = static_cast<char*>(temp) - static_cast<char*>(current);
-                } else {
-                    free_size = static_cast<char*>(end) - static_cast<char*>(current);
-                }
+                size_t free_size = get_free_block_size(trusted, current, end);
                 
                 if (free_size >= required_size) {
                     size_t remaining = free_size - required_size;
@@ -155,7 +169,7 @@ namespace {
         }
         
         void* next = get_next_occupied(current);
-        get_next_occupied(block) = next;
+        get_next_occupied(block) = next;    
         get_prev_occupied(block) = current;
         get_next_occupied(current) = block;
         if (next) {
@@ -196,6 +210,15 @@ namespace {
             current = get_next_occupied(current);
         }
         return false;
+    }
+
+    size_t get_block_size_at_position(void* trusted, void* block_start) {
+        if (is_occupied_block_start(trusted, block_start)) {
+            return get_block_size(block_start);
+        } else {
+            void* end = get_trusted_end(trusted);
+            return get_free_block_size(trusted, block_start, end);
+        }
     }
 }
 
@@ -398,36 +421,8 @@ std::vector<allocator_test_utils::block_info> allocator_boundary_tags::get_block
     while (current < end) {
         allocator_test_utils::block_info info;
         
-        bool is_occupied = false;
-        void* occupied_block = get_first_occupied(_trusted_memory);
-        while (occupied_block) {
-            if (occupied_block == current) {
-                is_occupied = true;
-                info.block_size = get_block_size(current);
-                break;
-            }
-            occupied_block = get_next_occupied(occupied_block);
-        }
-        
-        info.is_block_occupied = is_occupied;
-        
-        if (!is_occupied) {
-            void* next_occupied = nullptr;
-            void* temp = get_first_occupied(_trusted_memory);
-            while (temp) {
-                if (temp > current) {
-                    next_occupied = temp;
-                    break;
-                }
-                temp = get_next_occupied(temp);
-            }
-            
-            if (next_occupied) {
-                info.block_size = static_cast<char*>(next_occupied) - static_cast<char*>(current);
-            } else {
-                info.block_size = static_cast<char*>(end) - static_cast<char*>(current);
-            }
-        }
+        info.is_block_occupied = is_occupied_block_start(_trusted_memory, current);
+        info.block_size = get_block_size_at_position(_trusted_memory, current);
         
         result.push_back(info);
         current = static_cast<char*>(current) + info.block_size;
@@ -462,27 +457,7 @@ bool allocator_boundary_tags::boundary_iterator::operator!=(const boundary_itera
 
 allocator_boundary_tags::boundary_iterator& allocator_boundary_tags::boundary_iterator::operator++() & noexcept {
     if (_current_block && _trusted_memory) {
-        size_t block_size;
-        if (is_occupied_block_start(_trusted_memory, _current_block)) {
-            block_size = get_block_size(_current_block);
-        } else {
-            void* end = get_trusted_end(_trusted_memory);
-            void* next_occupied = nullptr;
-            void* temp = get_first_occupied(_trusted_memory);
-            while (temp) {
-                if (temp > _current_block) {
-                    next_occupied = temp;
-                    break;
-                }
-                temp = get_next_occupied(temp);
-            }
-            
-            if (next_occupied) {
-                block_size = static_cast<char*>(next_occupied) - static_cast<char*>(_current_block);
-            } else {
-                block_size = static_cast<char*>(end) - static_cast<char*>(_current_block);
-            }
-        }
+        size_t block_size = get_block_size_at_position(_trusted_memory, _current_block);
         
         _current_block = static_cast<char*>(_current_block) + block_size;
         
@@ -513,28 +488,7 @@ allocator_boundary_tags::boundary_iterator::operator--() & noexcept {
 
         while (current < end) {
             prev = current;
-
-            size_t block_size;
-            if (is_occupied_block_start(_trusted_memory, current)) {
-                block_size = get_block_size(current);
-            } else {
-                void* next_occupied = nullptr;
-                void* temp = get_first_occupied(_trusted_memory);
-                while (temp) {
-                    if (temp > current) {
-                        next_occupied = temp;
-                        break;
-                    }
-                    temp = get_next_occupied(temp);
-                }
-
-                if (next_occupied) {
-                    block_size = static_cast<char*>(next_occupied) - static_cast<char*>(current);
-                } else {
-                    block_size = static_cast<char*>(end) - static_cast<char*>(current);
-                }
-            }
-
+            size_t block_size = get_block_size_at_position(_trusted_memory, current);
             current = static_cast<char*>(current) + block_size;
         }
 
@@ -547,37 +501,13 @@ allocator_boundary_tags::boundary_iterator::operator--() & noexcept {
 
     while (current && current < _current_block) {
         prev = current;
-
-        size_t block_size;
-        if (is_occupied_block_start(_trusted_memory, current)) {
-            block_size = get_block_size(current);
-        } else {
-            void* end = get_trusted_end(_trusted_memory);
-            void* next_occupied = nullptr;
-            void* temp = get_first_occupied(_trusted_memory);
-
-            while (temp) {
-                if (temp > current) {
-                    next_occupied = temp;
-                    break;
-                }
-                temp = get_next_occupied(temp);
-            }
-
-            if (next_occupied) {
-                block_size = static_cast<char*>(next_occupied) - static_cast<char*>(current);
-            } else {
-                block_size = static_cast<char*>(end) - static_cast<char*>(current);
-            }
-        }
-
+        size_t block_size = get_block_size_at_position(_trusted_memory, current);
         current = static_cast<char*>(current) + block_size;
     }
 
     _current_block = prev;
     return *this;
 }
-
 
 allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_iterator::operator--(int n) {
     boundary_iterator tmp = *this;
@@ -587,25 +517,12 @@ allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_ite
 
 size_t allocator_boundary_tags::boundary_iterator::size() const noexcept {
     if (_current_block && _trusted_memory) {
+        size_t block_size = get_block_size_at_position(_trusted_memory, _current_block);
+        
         if (is_occupied_block_start(_trusted_memory, _current_block)) {
-            return get_block_size(_current_block) - OCCUPIED_BLOCK_METADATA_SIZE;
+            return block_size - OCCUPIED_BLOCK_METADATA_SIZE;
         } else {
-            void* end = get_trusted_end(_trusted_memory);
-            void* next_occupied = nullptr;
-            void* temp = get_first_occupied(_trusted_memory);
-            while (temp) {
-                if (temp > _current_block) {
-                    next_occupied = temp;
-                    break;
-                }
-                temp = get_next_occupied(temp);
-            }
-            
-            if (next_occupied) {
-                return static_cast<char*>(next_occupied) - static_cast<char*>(_current_block);
-            } else {
-                return static_cast<char*>(end) - static_cast<char*>(_current_block);
-            }
+            return block_size;
         }
     }
     return 0;
