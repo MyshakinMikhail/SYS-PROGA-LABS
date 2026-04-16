@@ -500,11 +500,84 @@ allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_ite
     return tmp;
 }
 
-allocator_boundary_tags::boundary_iterator& allocator_boundary_tags::boundary_iterator::operator--() & noexcept {
-    // Для простоты реализуем только инкремент
-    // Декремент требует нахождения предыдущего блока, что сложнее
+allocator_boundary_tags::boundary_iterator& 
+allocator_boundary_tags::boundary_iterator::operator--() & noexcept {
+    if (!_trusted_memory) return *this;
+
+    void* begin = static_cast<char*>(_trusted_memory) + ALLOCATOR_METADATA_SIZE;
+
+    if (_current_block == nullptr) {
+        void* current = begin;
+        void* prev = nullptr;
+        void* end = get_trusted_end(_trusted_memory);
+
+        while (current < end) {
+            prev = current;
+
+            size_t block_size;
+            if (is_occupied_block_start(_trusted_memory, current)) {
+                block_size = get_block_size(current);
+            } else {
+                void* next_occupied = nullptr;
+                void* temp = get_first_occupied(_trusted_memory);
+                while (temp) {
+                    if (temp > current) {
+                        next_occupied = temp;
+                        break;
+                    }
+                    temp = get_next_occupied(temp);
+                }
+
+                if (next_occupied) {
+                    block_size = static_cast<char*>(next_occupied) - static_cast<char*>(current);
+                } else {
+                    block_size = static_cast<char*>(end) - static_cast<char*>(current);
+                }
+            }
+
+            current = static_cast<char*>(current) + block_size;
+        }
+
+        _current_block = prev;
+        return *this;
+    }
+
+    void* current = begin;
+    void* prev = nullptr;
+
+    while (current && current < _current_block) {
+        prev = current;
+
+        size_t block_size;
+        if (is_occupied_block_start(_trusted_memory, current)) {
+            block_size = get_block_size(current);
+        } else {
+            void* end = get_trusted_end(_trusted_memory);
+            void* next_occupied = nullptr;
+            void* temp = get_first_occupied(_trusted_memory);
+
+            while (temp) {
+                if (temp > current) {
+                    next_occupied = temp;
+                    break;
+                }
+                temp = get_next_occupied(temp);
+            }
+
+            if (next_occupied) {
+                block_size = static_cast<char*>(next_occupied) - static_cast<char*>(current);
+            } else {
+                block_size = static_cast<char*>(end) - static_cast<char*>(current);
+            }
+        }
+
+        current = static_cast<char*>(current) + block_size;
+    }
+
+    _current_block = prev;
     return *this;
 }
+
 
 allocator_boundary_tags::boundary_iterator allocator_boundary_tags::boundary_iterator::operator--(int n) {
     boundary_iterator tmp = *this;
