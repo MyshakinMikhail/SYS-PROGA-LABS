@@ -233,70 +233,14 @@ allocator_boundary_tags::~allocator_boundary_tags() {
     parent->deallocate(_trusted_memory, total_size);
 }
 
-allocator_boundary_tags::allocator_boundary_tags(const allocator_boundary_tags &other) {
-    if (other._trusted_memory == nullptr) {
-        _trusted_memory = nullptr;
-        return;
-    }
-    
-    std::lock_guard<std::mutex> lock(get_mutex(other._trusted_memory));
-    
-    size_t trusted_size = get_trusted_size(other._trusted_memory);
-    size_t total_size = trusted_size + allocator_metadata_size;
-    
-    std::pmr::memory_resource* parent = get_parent_allocator(other._trusted_memory);
-    void* memory = parent->allocate(total_size);
-    
-    if (!memory) {
-        throw std::bad_alloc();
-    }
-    
-    std::memcpy(memory, other._trusted_memory, total_size);
-    _trusted_memory = memory;
-    
-    new (&get_mutex(_trusted_memory)) std::mutex();
-    
-    void* first_occupied = get_first_occupied(_trusted_memory);
-    if (first_occupied) {
-        ptrdiff_t offset = static_cast<char*>(_trusted_memory) - static_cast<char*>(other._trusted_memory);
-        void* first_occupied = get_first_occupied(_trusted_memory);
-        if (first_occupied) {
-            first_occupied = static_cast<char*>(first_occupied) + offset;
-            get_first_occupied(_trusted_memory) = first_occupied;
-            void* current = first_occupied;
-            while (current) {
-                void* next = get_next_occupied(current);
-                void* prev = get_prev_occupied(current);
-                
-                if (next) {
-                    next = static_cast<char*>(next) + offset;
-                    get_next_occupied(current) = next;
-                }
-                
-                if (prev) {
-                    prev = static_cast<char*>(prev) + offset;
-                    get_prev_occupied(current) = prev;
-                }
-                current = next;
-            }
-        }
-    }
-}
-
-allocator_boundary_tags &allocator_boundary_tags::operator=(const allocator_boundary_tags &other) {
-    if (this != &other) {
-        allocator_boundary_tags tmp(other);
-        std::swap(_trusted_memory, tmp._trusted_memory);
-    }
-    return *this;
-}
-
 allocator_boundary_tags::allocator_boundary_tags(allocator_boundary_tags &&other) noexcept {
     _trusted_memory = other._trusted_memory;
+    std::lock_guard<std::mutex> lock(get_mutex(_trusted_memory)); // защита от гонки данных
     other._trusted_memory = nullptr;
 }
 
 allocator_boundary_tags &allocator_boundary_tags::operator=(allocator_boundary_tags &&other) noexcept {
+    std::lock_guard<std::mutex> lock(get_mutex(_trusted_memory)); // защита от гонки данных
     if (this != &other) {
         if (_trusted_memory) {
             std::pmr::memory_resource* parent = get_parent_allocator(_trusted_memory);

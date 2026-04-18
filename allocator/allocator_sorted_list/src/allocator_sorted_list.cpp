@@ -189,101 +189,6 @@ allocator_sorted_list::allocator_sorted_list(
     return static_cast<char*>(best_block) + block_metadata_size;
 }
 
-allocator_sorted_list::allocator_sorted_list(const allocator_sorted_list &other)
-{
-    if (other._trusted_memory == nullptr) {
-        _trusted_memory = nullptr;
-        return;
-    }
-    
-    char* other_metadata = static_cast<char*>(other._trusted_memory);
-    
-    std::pmr::memory_resource* parent = *reinterpret_cast<std::pmr::memory_resource**>(other_metadata);
-    size_t total_size = *reinterpret_cast<size_t*>(
-        other_metadata + sizeof(std::pmr::memory_resource*) + 
-        sizeof(allocator_with_fit_mode::fit_mode));
-    
-    void* memory;
-    if (parent != nullptr) {
-        memory = parent->allocate(total_size);
-    } else {
-        memory = ::operator new(total_size);
-    }
-    
-    if (memory == nullptr) {
-        throw std::bad_alloc();
-    }
-    
-    _trusted_memory = memory;
-    
-    std::memcpy(_trusted_memory, other._trusted_memory, total_size);
-    
-    char* ptr = static_cast<char*>(_trusted_memory);
-    ptr += sizeof(std::pmr::memory_resource*) + 
-           sizeof(allocator_with_fit_mode::fit_mode) + 
-           sizeof(size_t);
-    
-    reinterpret_cast<std::mutex*>(ptr)->~mutex();
-    new (ptr) std::mutex();
-}
-
-allocator_sorted_list &allocator_sorted_list::operator=(const allocator_sorted_list &other)
-{
-    if (this == &other) {
-        return *this;
-    }
-    
-    if (_trusted_memory != nullptr) {
-        char* metadata_ptr = static_cast<char*>(_trusted_memory);
-        std::pmr::memory_resource* parent = *reinterpret_cast<std::pmr::memory_resource**>(metadata_ptr);
-        size_t total_size = *reinterpret_cast<size_t*>(
-            metadata_ptr + sizeof(std::pmr::memory_resource*) + 
-            sizeof(allocator_with_fit_mode::fit_mode));
-        
-        if (parent != nullptr) {
-            parent->deallocate(_trusted_memory, total_size);
-        } else {
-            ::operator delete(_trusted_memory);
-        }
-    }
-    
-    if (other._trusted_memory == nullptr) {
-        _trusted_memory = nullptr;
-        return *this;
-    }
-    
-    char* other_metadata = static_cast<char*>(other._trusted_memory);
-    std::pmr::memory_resource* parent = *reinterpret_cast<std::pmr::memory_resource**>(other_metadata);
-    size_t total_size = *reinterpret_cast<size_t*>(
-        other_metadata + sizeof(std::pmr::memory_resource*) + 
-        sizeof(allocator_with_fit_mode::fit_mode));
-    
-    void* memory;
-    if (parent != nullptr) {
-        memory = parent->allocate(total_size);
-    } else {
-        memory = ::operator new(total_size);
-    }
-    
-    if (memory == nullptr) {
-        throw std::bad_alloc();
-    }
-    
-    _trusted_memory = memory;
-    std::memcpy(_trusted_memory, other._trusted_memory, total_size);
-    
-    // Переинициализируем мьютекс
-    char* ptr = static_cast<char*>(_trusted_memory);
-    ptr += sizeof(std::pmr::memory_resource*) + 
-           sizeof(allocator_with_fit_mode::fit_mode) + 
-           sizeof(size_t);
-    
-    reinterpret_cast<std::mutex*>(ptr)->~mutex();
-    new (ptr) std::mutex();
-    
-    return *this;
-}
-
 bool allocator_sorted_list::do_is_equal(const std::pmr::memory_resource &other) const noexcept
 {
     return this == &other;
@@ -311,11 +216,12 @@ void allocator_sorted_list::do_deallocate_sm(
         (sizeof(std::pmr::memory_resource*) + sizeof(allocator_with_fit_mode::fit_mode) + 
          sizeof(size_t) + sizeof(std::mutex) + sizeof(void*)) ||
         block >= static_cast<char*>(_trusted_memory) + total_size) {
-        return;
-    }
+            throw std::logic_error("Блок не находится в памяти аллокатора");
+        }
+
 
     if (*reinterpret_cast<void**>(block) != _trusted_memory) {
-        return;
+        throw std::logic_error("Данный блок имеет parent_allocator отличный от текущего");
     }
     
     size_t block_size = *reinterpret_cast<size_t*>(static_cast<char*>(block) + sizeof(void*));
