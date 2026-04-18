@@ -112,7 +112,8 @@ allocator_sorted_list::allocator_sorted_list(
         throw std::bad_alloc();
     }
     
-    size_t aligned_size = (size + sizeof(void*) - 1) & ~(sizeof(void*) - 1);
+    // округление вверх 
+    size_t aligned_size = (size + sizeof(void*) - 1) & ~(sizeof(void*) - 1); 
     size_t total_required = aligned_size + block_metadata_size;
     
     void* best_block = nullptr;
@@ -355,7 +356,6 @@ void allocator_sorted_list::do_deallocate_sm(
         *reinterpret_cast<size_t*>(static_cast<char*>(prev) + sizeof(void*)) = prev_size + block_size;
         *reinterpret_cast<void**>(prev) = *reinterpret_cast<void**>(block);
     }
-    // должен ли аллокатор стирать метаданные старого слитого блока
 }
 
 inline void allocator_sorted_list::set_fit_mode(
